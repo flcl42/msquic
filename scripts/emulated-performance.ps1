@@ -52,6 +52,12 @@ be in the current directory.
 .PARAMETER NoDateLogDir
     Doesn't include the Date/Time in the log directory path.
 
+.PARAMETER ScenarioName
+    Optional scenario name to store in the generated result data.
+
+.PARAMETER PrintConnectionStats
+    Prints and stores per-iteration QUIC connection statistics from secnetperf.
+
 .PARAMETER CongestionControl
     The congestion control algorithm(s) used to test. Supported MsQuic values
     are cubic, bbr, and bbrv3.
@@ -121,6 +127,12 @@ param (
     [switch]$NoDateLogDir = $false,
 
     [Parameter(Mandatory = $false)]
+    [string]$ScenarioName = "Custom",
+
+    [Parameter(Mandatory = $false)]
+    [switch]$PrintConnectionStats = $false,
+
+    [Parameter(Mandatory = $false)]
     [string[]]$CongestionControl = "cubic"
 )
 
@@ -141,9 +153,11 @@ class FormattedResult {
     [int]$RateKbps;
     [int]$PrevKbps;
     [System.String]$CongestionControl;
+    [System.String]$ScenarioName;
     [int]$Tcp;
 
     FormattedResult (
+        [string]$ScenarioName,
         [int]$RttMs,
         [int]$BottleneckMbps,
         [int]$BottleneckBufferPackets,
@@ -157,6 +171,7 @@ class FormattedResult {
         [int]$RemoteKbps,
         [System.String]$CongestionControl
     ) {
+        $this.ScenarioName = $ScenarioName;
         $this.Tcp = $Tcp;
         $this.RttMs = $RttMs;
         $this.NetMbps = $BottleneckMbps;
@@ -176,6 +191,7 @@ class FormattedResult {
 }
 
 class TestResult {
+    [string]$ScenarioName;
     [int]$RttMs;
     [int]$BottleneckMbps;
     [int]$BottleneckBufferPackets;
@@ -187,9 +203,11 @@ class TestResult {
     [bool]$Pacing;
     [int]$RateKbps;
     [System.Collections.Generic.List[int]]$RawRateKbps;
+    [System.Collections.Generic.List[object]]$ConnectionStats;
     [System.String]$CongestionControl;
 
     TestResult (
+        [string]$ScenarioName,
         [int]$RttMs,
         [int]$BottleneckMbps,
         [int]$BottleneckBufferPackets,
@@ -201,8 +219,10 @@ class TestResult {
         [bool]$Pacing,
         [int]$RateKbps,
         [System.Collections.Generic.List[int]]$RawRateKbps,
+        [System.Collections.Generic.List[object]]$ConnectionStats,
         [System.String]$CongestionControl
     ) {
+        $this.ScenarioName = $ScenarioName;
         $this.RttMs = $RttMs;
         $this.BottleneckMbps = $BottleneckMbps;
         $this.BottleneckBufferPackets = $BottleneckBufferPackets;
@@ -214,6 +234,7 @@ class TestResult {
         $this.Pacing = $Pacing;
         $this.RateKbps = $RateKbps;
         $this.RawRateKbps = $RawRateKbps;
+        $this.ConnectionStats = $ConnectionStats;
         $this.CongestionControl = $CongestionControl;
     }
 }
@@ -245,6 +266,37 @@ function Find-MatchingTest([Object]$TestResult, [Object]$RemoteResults) {
         }
     }
     return $null;
+}
+
+function Get-ConnectionStatisticValue([string]$Output, [string]$Name) {
+    $Match = [regex]::Match($Output, "(?<![A-Za-z])$([regex]::Escape($Name))\s+(\d+)\s*(?:us)?")
+    if (!$Match.Success) {
+        return $null
+    }
+
+    return [int64]$Match.Groups[1].Value
+}
+
+function Get-ConnectionStatistics([string]$Output) {
+    if (!$Output.Contains("Connection Statistics:")) {
+        return $null
+    }
+
+    return [pscustomobject]@{
+        RttUs = Get-ConnectionStatisticValue $Output "RTT"
+        MinRttUs = Get-ConnectionStatisticValue $Output "MinRTT"
+        EcnCapable = Get-ConnectionStatisticValue $Output "EcnCapable"
+        SendTotalPackets = Get-ConnectionStatisticValue $Output "SendTotalPackets"
+        SendSuspectedLostPackets = Get-ConnectionStatisticValue $Output "SendSuspectedLostPackets"
+        SendSpuriousLostPackets = Get-ConnectionStatisticValue $Output "SendSpuriousLostPackets"
+        SendCongestionCount = Get-ConnectionStatisticValue $Output "SendCongestionCount"
+        SendEcnCongestionCount = Get-ConnectionStatisticValue $Output "SendEcnCongestionCount"
+        RecvTotalPackets = Get-ConnectionStatisticValue $Output "RecvTotalPackets"
+        RecvReorderedPackets = Get-ConnectionStatisticValue $Output "RecvReorderedPackets"
+        RecvDroppedPackets = Get-ConnectionStatisticValue $Output "RecvDroppedPackets"
+        RecvDuplicatePackets = Get-ConnectionStatisticValue $Output "RecvDuplicatePackets"
+        RecvDecryptionFailures = Get-ConnectionStatisticValue $Output "RecvDecryptionFailures"
+    }
 }
 
 function Get-CurrentBranch([string]$RepoDir) {
@@ -395,7 +447,7 @@ if ($MergeDataFiles) {
                 }
             }
 
-            $Run = [FormattedResult]::new($_.RttMs, $_.BottleneckMbps, $_.BottleneckBufferPackets, $_.RandomLossDenominator, $_.RandomReorderDenominator, $_.ReorderDelayDeltaMs, $_.Tcp, $_.DurationMs, $_.Pacing, $_.RateKbps, $RemoteRate, $_.CongestionControl);
+            $Run = [FormattedResult]::new($_.ScenarioName, $_.RttMs, $_.BottleneckMbps, $_.BottleneckBufferPackets, $_.RandomLossDenominator, $_.RandomReorderDenominator, $_.ReorderDelayDeltaMs, $_.Tcp, $_.DurationMs, $_.Pacing, $_.RateKbps, $RemoteRate, $_.CongestionControl);
             $FormatResults.Add($Run)
         }
     }
@@ -512,7 +564,7 @@ New-Item -Path $OutputDir -ItemType Directory -Force | Out-Null
 $UniqueId = New-Guid
 $OutputFile = Join-Path $OutputDir "WANPerf_$($UniqueId.ToString("N")).json"
 # CSV header
-$Header = "RttMs, BottleneckMbps, BottleneckBufferPackets, RandomLossDenominator, RandomReorderDenominator, ReorderDelayDeltaMs, Tcp, CongestionControl, DurationMs, Pacing, RateKbps"
+$Header = "ScenarioName, RttMs, BottleneckMbps, BottleneckBufferPackets, RandomLossDenominator, RandomReorderDenominator, ReorderDelayDeltaMs, Tcp, CongestionControl, DurationMs, Pacing, RateKbps"
 for ($i = 0; $i -lt $NumIterations; $i++) {
     $Header += ", RawRateKbps$($i+1)"
 }
@@ -577,6 +629,7 @@ foreach ($ThisReorderDelayDeltaMs in $ReorderDelayDeltaMs) {
 
         # Run through all the iterations and keep track of the results.
         $Results = [System.Collections.Generic.List[int]]::new()
+        $ConnectionStats = [System.Collections.Generic.List[object]]::new()
         Write-Debug "Run upload test: Duration=$ThisDurationMs ms, Pacing=$ThisPacing, Cc=$ThisCongestionControl"
         for ($i = 0; $i -lt $NumIterations; $i++) {
 
@@ -618,6 +671,9 @@ foreach ($ThisReorderDelayDeltaMs in $ReorderDelayDeltaMs) {
 
             $Rate = 0
             $Command = "$SecNetPerf -test:tput -tcp:$UseTcp -maxruntime:$MaxRuntimeMs -bind:192.168.1.12 -target:192.168.1.11 -sendbuf:0 -upload:$($ThisDurationMs)ms -timed:1 -pacing:$ThisPacing -cc:$ThisCongestionControl -ptput:1"
+            if ($PrintConnectionStats) {
+                $Command += " -pconn:1"
+            }
             Write-Debug $Command
             $Output = [string](Invoke-Expression $Command)
             Write-Debug $Output
@@ -643,6 +699,12 @@ foreach ($ThisReorderDelayDeltaMs in $ReorderDelayDeltaMs) {
             }
 
             $Results.Add($Rate) | Out-Null
+            if ($PrintConnectionStats) {
+                $Stats = Get-ConnectionStatistics $Output
+                if ($null -ne $Stats) {
+                    $ConnectionStats.Add($Stats) | Out-Null
+                }
+            }
 
             Write-Debug (Out-String -InputObject (Invoke-Expression "pktmon stop"))
 
@@ -658,11 +720,11 @@ foreach ($ThisReorderDelayDeltaMs in $ReorderDelayDeltaMs) {
 
         # Grab the average result and write the CSV output.
         $RateKbps = [int]($Results | Where-Object {$_ -ne 0} | Measure-Object -Average).Average # TODO - Convert to Median instead of Average
-        $Row = "$ThisRttMs, $ThisBottleneckMbps, $ThisBottleneckBufferPackets, $ThisRandomLossDenominator, $ThisRandomReorderDenominator, $ThisReorderDelayDeltaMs, $UseTcp, $ThisCongestionControl, $ThisDurationMs, $ThisPacing, $RateKbps"
+        $Row = "$ScenarioName, $ThisRttMs, $ThisBottleneckMbps, $ThisBottleneckBufferPackets, $ThisRandomLossDenominator, $ThisRandomReorderDenominator, $ThisReorderDelayDeltaMs, $UseTcp, $ThisCongestionControl, $ThisDurationMs, $ThisPacing, $RateKbps"
         for ($i = 0; $i -lt $NumIterations; $i++) {
             $Row += ", $($Results[$i])"
         }
-        $RunResult = [TestResult]::new($ThisRttMs, $ThisBottleneckMbps, $ThisBottleneckBufferPackets, $ThisRandomLossDenominator, $ThisRandomReorderDenominator, $ThisReorderDelayDeltaMs, $UseTcp, $ThisDurationMs, $ThisPacing, $RateKbps, $Results, $ThisCongestionControl);
+        $RunResult = [TestResult]::new($ScenarioName, $ThisRttMs, $ThisBottleneckMbps, $ThisBottleneckBufferPackets, $ThisRandomLossDenominator, $ThisRandomReorderDenominator, $ThisReorderDelayDeltaMs, $UseTcp, $ThisDurationMs, $ThisPacing, $RateKbps, $Results, $ConnectionStats, $ThisCongestionControl);
         $RunResults.Runs.Add($RunResult)
         Write-Host $Row
         if ($RemoteResults -ne "") {

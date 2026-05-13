@@ -5,11 +5,17 @@ Runs the BBRv3 comparison matrix over the existing DuoNic emulated WAN harness.
 
 .DESCRIPTION
 This wrapper exercises the two existing MsQuic congestion controllers and the
-new BBRv3 controller across three deterministic environments:
+new BBRv3 controller across deterministic environments, including cases where
+model-based BBR is expected to have a useful advantage over loss-based CUBIC
+or where BBRv3 should improve BBRv1 behavior:
 
   - RegularMidLatency: mid-latency, mid-throughput, no random loss.
   - FixedSeedRandomThroughput: a fixed-seed spread of bottleneck rates.
   - ModeratePacketLoss: mid-latency, mid-throughput, moderate random loss.
+  - RandomLossSweep: non-congestion random loss at several loss rates.
+  - ShallowBuffer: high-BDP path with queues below one BDP.
+  - ShallowBufferWithLoss: shallow queues plus random loss.
+  - HighBdpRandomLoss: long-RTT/high-throughput path with random loss.
 
 The script delegates to scripts/emulated-performance.ps1, so it has the same
 requirements: DuoNic must be installed and secnetperf must already be built.
@@ -34,7 +40,7 @@ param (
     [string[]]$Protocol = "QUIC",
 
     [Parameter(Mandatory = $false)]
-    [ValidateSet("RegularMidLatency", "FixedSeedRandomThroughput", "ModeratePacketLoss", "All")]
+    [ValidateSet("RegularMidLatency", "FixedSeedRandomThroughput", "ModeratePacketLoss", "RandomLossSweep", "ShallowBuffer", "ShallowBufferWithLoss", "HighBdpRandomLoss", "All")]
     [string[]]$Scenario = "All",
 
     [Parameter(Mandatory = $false)]
@@ -49,6 +55,13 @@ param (
 
     [Parameter(Mandatory = $false)]
     [Int32]$NumIterations = 3,
+
+    [Parameter(Mandatory = $false)]
+    [ValidateSet("None", "Datapath.Light", "Datapath.Verbose", "Performance.Light", "Performance.Verbose", "Full.Light", "Full.Verbose")]
+    [string]$LogProfile = "None",
+
+    [Parameter(Mandatory = $false)]
+    [switch]$PrintConnectionStats = $false,
 
     [Parameter(Mandatory = $false)]
     [switch]$NoDateLogDir = $false
@@ -81,10 +94,38 @@ $ScenarioSpecs = @{
         RandomLossDenominator = @(200)
         BaseRandomSeed = "c0ffee1234567890abcddcba098765"
     }
+    RandomLossSweep = @{
+        RttMs = @(60)
+        BottleneckMbps = @(50)
+        BottleneckQueueRatio = @(1.0)
+        RandomLossDenominator = @(1000, 500, 200)
+        BaseRandomSeed = "e2e1f00d1234567890abcddcba0987"
+    }
+    ShallowBuffer = @{
+        RttMs = @(80)
+        BottleneckMbps = @(50)
+        BottleneckQueueRatio = @(0.125, 0.25, 0.5)
+        RandomLossDenominator = @(0)
+        BaseRandomSeed = "5aa1100b1234567890abcddcba0987"
+    }
+    ShallowBufferWithLoss = @{
+        RttMs = @(80)
+        BottleneckMbps = @(50)
+        BottleneckQueueRatio = @(0.25, 0.5)
+        RandomLossDenominator = @(500, 200)
+        BaseRandomSeed = "1055b0ff1234567890abcddcba0987"
+    }
+    HighBdpRandomLoss = @{
+        RttMs = @(100)
+        BottleneckMbps = @(100)
+        BottleneckQueueRatio = @(1.0)
+        RandomLossDenominator = @(1000, 500)
+        BaseRandomSeed = "b16bd0001234567890abcddcba0987"
+    }
 }
 
 if ($Scenario -contains "All") {
-    $Scenario = @("RegularMidLatency", "FixedSeedRandomThroughput", "ModeratePacketLoss")
+    $Scenario = @("RegularMidLatency", "FixedSeedRandomThroughput", "ModeratePacketLoss", "RandomLossSweep", "ShallowBuffer", "ShallowBufferWithLoss", "HighBdpRandomLoss")
 }
 
 foreach ($ScenarioName in $Scenario) {
@@ -108,6 +149,9 @@ foreach ($ScenarioName in $Scenario) {
         -DurationMs $DurationMs `
         -Pacing $Pacing `
         -NumIterations $NumIterations `
+        -LogProfile $LogProfile `
+        -ScenarioName $ScenarioName `
+        -PrintConnectionStats:$PrintConnectionStats `
         -CongestionControl $CongestionControl `
         -NoDateLogDir:$NoDateLogDir
 }

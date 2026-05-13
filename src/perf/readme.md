@@ -120,7 +120,14 @@ App Main returning status 0
 The BBRv3 comparison matrix is wrapped by `scripts/bbrv3-emulated-benchmark.ps1`.
 It runs `cubic`, `bbr`, and `bbrv3` through the existing DuoNic emulated
 performance harness across regular mid-latency throughput, fixed-seed random
-throughput, and moderate packet-loss scenarios.
+throughput, moderate packet-loss, random-loss sweep, shallow-buffer, shallow
+buffer plus loss, and high-BDP random-loss scenarios.
+
+The added BBR-focused cases map to the path types called out by BBR's design:
+random loss, shallow buffers, and higher-BDP paths where loss-based controllers
+can under-fill the path after loss. Use `-PrintConnectionStats` to store
+per-iteration RTT/loss/congestion counters in the JSON output, or `-LogProfile`
+to collect the existing MsQuic ETW traces for deeper controller-state analysis.
 
 Example:
 
