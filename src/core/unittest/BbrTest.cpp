@@ -16,6 +16,7 @@ Abstract:
 
 extern "C" {
 void BbrCongestionControlInitialize(QUIC_CONGESTION_CONTROL* Cc, const QUIC_SETTINGS_INTERNAL* Settings);
+void BbrCongestionControlInitializeV3(QUIC_CONGESTION_CONTROL* Cc, const QUIC_SETTINGS_INTERNAL* Settings);
 uint64_t BbrCongestionControlGetBandwidth(const QUIC_CONGESTION_CONTROL* Cc);
 uint32_t BbrCongestionControlGetTargetCwnd(QUIC_CONGESTION_CONTROL* Cc, uint32_t Gain);
 }
@@ -2219,4 +2220,65 @@ TEST_F(BbrTest_DeepTest, SetExemption_Zero)
 
     CC->QuicCongestionControlSetExemption(CC, 0);
     ASSERT_EQ(CC->QuicCongestionControlGetExemptions(CC), 0u);
+}
+
+TEST_F(BbrTest_DeepTest, BbrV3InitializationSelectsV3Policy)
+{
+    Settings.InitialWindowPackets = 10;
+    Settings.CongestionControlAlgorithm = QUIC_CONGESTION_CONTROL_ALGORITHM_BBR_V3;
+    InitBbrMockConnection(Connection, 1280);
+    CC = &Connection.CongestionControl;
+    BbrCongestionControlInitializeV3(CC, &Settings);
+    Bbr = &CC->Bbr;
+
+    ASSERT_STREQ(CC->Name, "BBRv3");
+    ASSERT_TRUE(Bbr->BbrVersion3);
+    ASSERT_EQ(Bbr->InflightHigh, UINT32_MAX);
+    ASSERT_EQ(Bbr->InflightLow, UINT32_MAX);
+}
+
+TEST_F(BbrTest_DeepTest, BbrV3LossUsesInflightBoundInsteadOfDoubleLossCut)
+{
+    const auto RunSingleLoss =
+        [](
+            QUIC_CONGESTION_CONTROL_ALGORITHM Algorithm,
+            uint32_t* InflightHigh
+            )
+        {
+            QUIC_CONNECTION Connection{};
+            QUIC_SETTINGS_INTERNAL Settings{};
+            Settings.InitialWindowPackets = 10;
+            Settings.CongestionControlAlgorithm = (uint16_t)Algorithm;
+            InitBbrMockConnection(Connection, 1280);
+
+            QUIC_CONGESTION_CONTROL* Cc = &Connection.CongestionControl;
+            if (Algorithm == QUIC_CONGESTION_CONTROL_ALGORITHM_BBR_V3) {
+                BbrCongestionControlInitializeV3(Cc, &Settings);
+            } else {
+                BbrCongestionControlInitialize(Cc, &Settings);
+            }
+
+            const uint32_t InitialWindow = Cc->Bbr.CongestionWindow;
+            const uint32_t LostBytes = 2 * QuicPathGetDatagramPayloadSize(&Connection.Paths[0]);
+
+            Cc->QuicCongestionControlOnDataSent(Cc, InitialWindow);
+
+            QUIC_LOSS_EVENT Loss = MakeBbrLossEvent(LostBytes, 5, 10);
+            Cc->QuicCongestionControlOnDataLost(Cc, &Loss);
+
+            *InflightHigh = Cc->Bbr.InflightHigh;
+            return Cc->Bbr.RecoveryWindow;
+        };
+
+    uint32_t BbrInflightHigh = 0;
+    uint32_t BbrRecoveryWindow =
+        RunSingleLoss(QUIC_CONGESTION_CONTROL_ALGORITHM_BBR, &BbrInflightHigh);
+
+    uint32_t BbrV3InflightHigh = 0;
+    uint32_t BbrV3RecoveryWindow =
+        RunSingleLoss(QUIC_CONGESTION_CONTROL_ALGORITHM_BBR_V3, &BbrV3InflightHigh);
+
+    ASSERT_EQ(BbrInflightHigh, UINT32_MAX);
+    ASSERT_NE(BbrV3InflightHigh, UINT32_MAX);
+    ASSERT_GT(BbrV3RecoveryWindow, BbrRecoveryWindow);
 }

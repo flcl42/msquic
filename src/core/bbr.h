@@ -84,6 +84,11 @@ typedef struct QUIC_CONGESTION_CONTROL_BBR {
     BOOLEAN MinRttTimestampValid: 1;
 
     //
+    // TRUE when this instance is using the BBRv3 policy.
+    //
+    BOOLEAN BbrVersion3: 1;
+
+    //
     // The size of the initial congestion window in packets
     //
     uint32_t InitialCongestionWindowPackets;
@@ -189,6 +194,13 @@ typedef struct QUIC_CONGESTION_CONTROL_BBR {
     uint64_t LastEstimatedStartupBandwidth;
 
     //
+    // BBRv3 upper/lower in-flight bounds learned from loss.
+    //
+    uint32_t InflightHigh;
+
+    uint32_t InflightLow;
+
+    //
     // Indicates whether to exit ProbeRtt if there're at least one RTT round with the
     // minimum cwnd
     //
@@ -222,6 +234,13 @@ typedef struct QUIC_CONGESTION_CONTROL_BBR {
 _IRQL_requires_max_(DISPATCH_LEVEL)
 void
 BbrCongestionControlInitialize(
+    _In_ QUIC_CONGESTION_CONTROL* Cc,
+    _In_ const QUIC_SETTINGS_INTERNAL* Settings
+    );
+
+_IRQL_requires_max_(DISPATCH_LEVEL)
+void
+BbrCongestionControlInitializeV3(
     _In_ QUIC_CONGESTION_CONTROL* Cc,
     _In_ const QUIC_SETTINGS_INTERNAL* Settings
     );

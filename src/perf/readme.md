@@ -21,7 +21,7 @@ There are all the arguments that can be passed to the server:
 Argument | Usage | Meaning
 --- | --- | ---
 bind | `-bind:<address>` | Binds to the specified local address.
-cc | `-cc:<cubic,bbr>` | Congestion control algorithm used.
+cc | `-cc:<cubic,bbr,bbrv3>` | Congestion control algorithm used.
 cibir | `-cibir:<hex_bytes>` | The well-known CIBIR identifier.
 cipher | `-cipher:<value>` | Decimal value of 1 or more `QUIC_ALLOWED_CIPHER_SUITE_FLAGS`.
 cpu | `-cpu:<cpu_indexes>` | Comma-separated list of CPUs to run on.
@@ -113,6 +113,19 @@ Started!
 
 Download: 2996595053 bytes @ 4793496 kbps (5001.101 ms).
 App Main returning status 0
+```
+
+## BBRv3 Emulated WAN Comparison
+
+The BBRv3 comparison matrix is wrapped by `scripts/bbrv3-emulated-benchmark.ps1`.
+It runs `cubic`, `bbr`, and `bbrv3` through the existing DuoNic emulated
+performance harness across regular mid-latency throughput, fixed-seed random
+throughput, and moderate packet-loss scenarios.
+
+Example:
+
+```
+> scripts\bbrv3-emulated-benchmark.ps1 -Config Release -Arch x64 -Tls schannel
 ```
 
 Upload for 1 MB on 10 different streams, printing throughput information

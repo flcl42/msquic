@@ -51,6 +51,11 @@ typedef enum RECOVERY_STATE {
 //
 #define GAIN_CYCLE_LENGTH 8
 
+//
+// BBRv3 uses a shorter ProbeBW cycle: DOWN, CRUISE, REFILL, UP.
+//
+#define BBRV3_GAIN_CYCLE_LENGTH 4
+
 const uint64_t kQuantaFactor = 3;
 
 const uint32_t kMinCwndInMss = 4;
@@ -95,6 +100,15 @@ const uint32_t kPacingGain[GAIN_CYCLE_LENGTH] = {
     GAIN_UNIT, GAIN_UNIT, GAIN_UNIT
 };
 
+const uint32_t kBbrV3PacingGain[BBRV3_GAIN_CYCLE_LENGTH] = {
+    GAIN_UNIT * 9 / 10,
+    GAIN_UNIT,
+    GAIN_UNIT,
+    GAIN_UNIT * 5 / 4
+};
+
+const uint32_t kBbrV3InflightHeadroomDivisor = 8;
+
 //
 // During ProbeRtt, we need to stay in low inflight condition for at least kProbeRttTimeInUs
 //
@@ -108,6 +122,28 @@ const uint32_t kBbrMinRttExpirationInMicroSecs = S_TO_US(10);
 const uint32_t kBbrMaxBandwidthFilterLen = 10;
 
 const uint32_t kBbrMaxAckHeightFilterLen = 10;
+
+_IRQL_requires_max_(DISPATCH_LEVEL)
+uint32_t
+BbrCongestionControlGetGainCycleLength(
+    _In_ const QUIC_CONGESTION_CONTROL* Cc
+    )
+{
+    return Cc->Bbr.BbrVersion3 ? BBRV3_GAIN_CYCLE_LENGTH : GAIN_CYCLE_LENGTH;
+}
+
+_IRQL_requires_max_(DISPATCH_LEVEL)
+uint32_t
+BbrCongestionControlGetPacingGain(
+    _In_ const QUIC_CONGESTION_CONTROL* Cc,
+    _In_ uint32_t PacingCycleIndex
+    )
+{
+    if (Cc->Bbr.BbrVersion3) {
+        return kBbrV3PacingGain[PacingCycleIndex % BBRV3_GAIN_CYCLE_LENGTH];
+    }
+    return kPacingGain[PacingCycleIndex % GAIN_CYCLE_LENGTH];
+}
 
 _IRQL_requires_max_(DISPATCH_LEVEL)
 void
@@ -248,11 +284,15 @@ BbrCongestionControlTransitToProbeBw(
     Bbr->BbrState = BBR_STATE_PROBE_BW;
     Bbr->CwndGain = kCwndGain;
 
-    uint32_t RandomValue = 0;
-    CxPlatRandom(sizeof(uint32_t), &RandomValue);
-    Bbr->PacingCycleIndex = (RandomValue % (GAIN_CYCLE_LENGTH - 1) + 2) % GAIN_CYCLE_LENGTH;
-    CXPLAT_DBG_ASSERT(Bbr->PacingCycleIndex != 1);
-    Bbr->PacingGain = kPacingGain[Bbr->PacingCycleIndex];
+    if (Bbr->BbrVersion3) {
+        Bbr->PacingCycleIndex = 0;
+    } else {
+        uint32_t RandomValue = 0;
+        CxPlatRandom(sizeof(uint32_t), &RandomValue);
+        Bbr->PacingCycleIndex = (RandomValue % (GAIN_CYCLE_LENGTH - 1) + 2) % GAIN_CYCLE_LENGTH;
+        CXPLAT_DBG_ASSERT(Bbr->PacingCycleIndex != 1);
+    }
+    Bbr->PacingGain = BbrCongestionControlGetPacingGain(Cc, Bbr->PacingCycleIndex);
 
     Bbr->CycleStart = CongestionEventTime;
 }
@@ -611,7 +651,15 @@ BbrCongestionControlGetTargetCwnd(
 
     uint64_t Bdp = BandwidthEst * Bbr->MinRtt / kMicroSecsInSec / BW_UNIT;
     uint64_t TargetCwnd = (Bdp * Gain / GAIN_UNIT) + (kQuantaFactor * Bbr->SendQuantum);
-    return (uint32_t)TargetCwnd;
+    if (Bbr->BbrVersion3) {
+        if (Bbr->InflightLow != UINT32_MAX) {
+            TargetCwnd = CXPLAT_MIN(TargetCwnd, Bbr->InflightLow);
+        } else if (Bbr->InflightHigh != UINT32_MAX) {
+            TargetCwnd = CXPLAT_MIN(TargetCwnd, Bbr->InflightHigh);
+        }
+    }
+
+    return (uint32_t)CXPLAT_MIN(TargetCwnd, UINT32_MAX);
 }
 
 _IRQL_requires_max_(DISPATCH_LEVEL)
@@ -819,6 +867,27 @@ BbrCongestionControlOnDataAcknowledged(
 
     BbrBandwidthFilterOnPacketAcked(&Bbr->BandwidthFilter, AckEvent, Bbr->RoundTripCounter);
 
+    if (Bbr->BbrVersion3 && !AckEvent->HasLoss) {
+        if (Bbr->InflightLow != UINT32_MAX) {
+            uint64_t RaisedInflightLow = Bbr->InflightLow + AckEvent->NumRetransmittableBytes;
+            if (Bbr->InflightHigh == UINT32_MAX || RaisedInflightLow >= Bbr->InflightHigh) {
+                Bbr->InflightLow = UINT32_MAX;
+            } else {
+                Bbr->InflightLow = (uint32_t)RaisedInflightLow;
+            }
+        }
+
+        if (Bbr->BbrState == BBR_STATE_PROBE_BW &&
+            Bbr->PacingGain > GAIN_UNIT &&
+            Bbr->InflightHigh != UINT32_MAX &&
+            PrevInflightBytes >= Bbr->InflightHigh) {
+            Bbr->InflightHigh =
+                (uint32_t)CXPLAT_MIN(
+                    (uint64_t)Bbr->InflightHigh + AckEvent->NumRetransmittableBytes,
+                    UINT32_MAX);
+        }
+    }
+
     if (BbrCongestionControlInRecovery(Cc)) {
         CXPLAT_DBG_ASSERT(Bbr->EndOfRecoveryValid);
         if (NewRoundTrip && Bbr->RecoveryState != RECOVERY_STATE_GROWTH) {
@@ -853,9 +922,13 @@ BbrCongestionControlOnDataAcknowledged(
         }
 
         if (ShouldAdvancePacingGainCycle) {
-            Bbr->PacingCycleIndex = (Bbr->PacingCycleIndex + 1) % GAIN_CYCLE_LENGTH;
+            uint32_t GainCycleLength = BbrCongestionControlGetGainCycleLength(Cc);
+            if (Bbr->BbrVersion3 && AckEvent->HasLoss && Bbr->PacingGain > GAIN_UNIT) {
+                Bbr->PacingCycleIndex = GainCycleLength - 1;
+            }
+            Bbr->PacingCycleIndex = (Bbr->PacingCycleIndex + 1) % GainCycleLength;
             Bbr->CycleStart = AckEvent->TimeNow;
-            Bbr->PacingGain = kPacingGain[Bbr->PacingCycleIndex];
+            Bbr->PacingGain = BbrCongestionControlGetPacingGain(Cc, Bbr->PacingCycleIndex);
         }
     }
 
@@ -932,6 +1005,7 @@ BbrCongestionControlOnDataLost(
     Bbr->EndOfRecovery = LossEvent->LargestSentPacketNumber;
 
     CXPLAT_DBG_ASSERT(Bbr->BytesInFlight >= LossEvent->NumRetransmittableBytes);
+    uint32_t InflightBeforeLoss = Bbr->BytesInFlight;
     Bbr->BytesInFlight -= LossEvent->NumRetransmittableBytes;
 
     uint32_t RecoveryWindow = Bbr->RecoveryWindow;
@@ -955,6 +1029,32 @@ BbrCongestionControlOnDataLost(
             "[conn][%p] Persistent congestion event",
             Connection);
         Connection->Stats.Send.PersistentCongestionCount++;
+        if (Bbr->BbrVersion3) {
+            Bbr->InflightHigh = MinCongestionWindow;
+            Bbr->InflightLow = MinCongestionWindow;
+        }
+    } else if (Bbr->BbrVersion3) {
+        uint32_t NewInflightHigh = CXPLAT_MAX(Bbr->BytesInFlight, MinCongestionWindow);
+        if (Bbr->InflightHigh == UINT32_MAX || NewInflightHigh < Bbr->InflightHigh) {
+            Bbr->InflightHigh = NewInflightHigh;
+        }
+
+        uint32_t InflightHeadroom =
+            CXPLAT_MAX(DatagramPayloadLength, Bbr->InflightHigh / kBbrV3InflightHeadroomDivisor);
+        Bbr->InflightLow =
+            Bbr->InflightHigh > MinCongestionWindow + InflightHeadroom ?
+                Bbr->InflightHigh - InflightHeadroom :
+                MinCongestionWindow;
+
+        Bbr->RecoveryWindow =
+            CXPLAT_MAX(
+                CXPLAT_MIN(InflightBeforeLoss, Bbr->InflightHigh),
+                MinCongestionWindow);
+
+        if (Bbr->BbrState == BBR_STATE_PROBE_BW && Bbr->PacingGain > GAIN_UNIT) {
+            Bbr->PacingCycleIndex = 0;
+            Bbr->PacingGain = BbrCongestionControlGetPacingGain(Cc, Bbr->PacingCycleIndex);
+        }
     } else {
         Bbr->RecoveryWindow =
             RecoveryWindow > LossEvent->NumRetransmittableBytes + MinCongestionWindow
@@ -1032,6 +1132,8 @@ BbrCongestionControlReset(
     Bbr->AggregatedAckBytes = 0;
     Bbr->ExitingQuiescence = FALSE;
     Bbr->LastEstimatedStartupBandwidth = 0;
+    Bbr->InflightHigh = UINT32_MAX;
+    Bbr->InflightLow = UINT32_MAX;
 
     Bbr->AckAggregationStartTimeValid = FALSE;
     Bbr->AckAggregationStartTime = CxPlatTimeUs64();
@@ -1086,14 +1188,36 @@ static const QUIC_CONGESTION_CONTROL QuicCongestionControlBbr = {
     .QuicCongestionControlGetNetworkStatistics = BbrCongestionControlGetNetworkStatistics
 };
 
+static const QUIC_CONGESTION_CONTROL QuicCongestionControlBbrV3 = {
+    .Name = "BBRv3",
+    .QuicCongestionControlCanSend = BbrCongestionControlCanSend,
+    .QuicCongestionControlSetExemption = BbrCongestionControlSetExemption,
+    .QuicCongestionControlReset = BbrCongestionControlReset,
+    .QuicCongestionControlGetSendAllowance = BbrCongestionControlGetSendAllowance,
+    .QuicCongestionControlGetCongestionWindow = BbrCongestionControlGetCongestionWindow,
+    .QuicCongestionControlOnDataSent = BbrCongestionControlOnDataSent,
+    .QuicCongestionControlOnDataInvalidated = BbrCongestionControlOnDataInvalidated,
+    .QuicCongestionControlOnDataAcknowledged = BbrCongestionControlOnDataAcknowledged,
+    .QuicCongestionControlOnDataLost = BbrCongestionControlOnDataLost,
+    .QuicCongestionControlOnEcn = NULL,
+    .QuicCongestionControlOnSpuriousCongestionEvent = BbrCongestionControlOnSpuriousCongestionEvent,
+    .QuicCongestionControlLogOutFlowStatus = BbrCongestionControlLogOutFlowStatus,
+    .QuicCongestionControlGetExemptions = BbrCongestionControlGetExemptions,
+    .QuicCongestionControlGetBytesInFlightMax = BbrCongestionControlGetBytesInFlightMax,
+    .QuicCongestionControlIsAppLimited = BbrCongestionControlIsAppLimited,
+    .QuicCongestionControlSetAppLimited = BbrCongestionControlSetAppLimited,
+    .QuicCongestionControlGetNetworkStatistics = BbrCongestionControlGetNetworkStatistics
+};
+
 _IRQL_requires_max_(DISPATCH_LEVEL)
 void
-BbrCongestionControlInitialize(
+BbrCongestionControlInitializeInternal(
     _In_ QUIC_CONGESTION_CONTROL* Cc,
-    _In_ const QUIC_SETTINGS_INTERNAL* Settings
+    _In_ const QUIC_SETTINGS_INTERNAL* Settings,
+    _In_ BOOLEAN UseBbrV3
     )
 {
-    *Cc = QuicCongestionControlBbr;
+    *Cc = UseBbrV3 ? QuicCongestionControlBbrV3 : QuicCongestionControlBbr;
 
     QUIC_CONGESTION_CONTROL_BBR* Bbr = &Cc->Bbr;
 
@@ -1103,6 +1227,7 @@ BbrCongestionControlInitialize(
         QuicPathGetDatagramPayloadSize(&Connection->Paths[0]);
 
     Bbr->InitialCongestionWindowPackets = Settings->InitialWindowPackets;
+    Bbr->BbrVersion3 = UseBbrV3;
 
     Bbr->CongestionWindow = Bbr->InitialCongestionWindowPackets * DatagramPayloadLength;
     Bbr->InitialCongestionWindow = Bbr->InitialCongestionWindowPackets * DatagramPayloadLength;
@@ -1125,6 +1250,8 @@ BbrCongestionControlInitialize(
     Bbr->AggregatedAckBytes = 0;
     Bbr->ExitingQuiescence = FALSE;
     Bbr->LastEstimatedStartupBandwidth = 0;
+    Bbr->InflightHigh = UINT32_MAX;
+    Bbr->InflightLow = UINT32_MAX;
     Bbr->CycleStart = 0;
 
     Bbr->AckAggregationStartTimeValid = FALSE;
@@ -1159,4 +1286,24 @@ BbrCongestionControlInitialize(
 
     QuicConnLogOutFlowStats(Connection);
     QuicConnLogBbr(Connection);
+}
+
+_IRQL_requires_max_(DISPATCH_LEVEL)
+void
+BbrCongestionControlInitialize(
+    _In_ QUIC_CONGESTION_CONTROL* Cc,
+    _In_ const QUIC_SETTINGS_INTERNAL* Settings
+    )
+{
+    BbrCongestionControlInitializeInternal(Cc, Settings, FALSE);
+}
+
+_IRQL_requires_max_(DISPATCH_LEVEL)
+void
+BbrCongestionControlInitializeV3(
+    _In_ QUIC_CONGESTION_CONTROL* Cc,
+    _In_ const QUIC_SETTINGS_INTERNAL* Settings
+    )
+{
+    BbrCongestionControlInitializeInternal(Cc, Settings, TRUE);
 }

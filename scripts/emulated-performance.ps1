@@ -53,7 +53,8 @@ be in the current directory.
     Doesn't include the Date/Time in the log directory path.
 
 .PARAMETER CongestionControl
-    The congestion control algorithm used to test
+    The congestion control algorithm(s) used to test. Supported MsQuic values
+    are cubic, bbr, and bbrv3.
 
 #>
 
@@ -616,7 +617,7 @@ foreach ($ThisReorderDelayDeltaMs in $ReorderDelayDeltaMs) {
             pktmon start --capture --counters-only
 
             $Rate = 0
-            $Command = "$SecNetPerf -test:tput -tcp:$UseTcp -maxruntime:$MaxRuntimeMs -bind:192.168.1.12 -target:192.168.1.11 -sendbuf:0 -upload:$ThisDurationMs -timed:1 -pacing:$ThisPacing -cc:$ThisCongestionControl"
+            $Command = "$SecNetPerf -test:tput -tcp:$UseTcp -maxruntime:$MaxRuntimeMs -bind:192.168.1.12 -target:192.168.1.11 -sendbuf:0 -upload:$($ThisDurationMs)ms -timed:1 -pacing:$ThisPacing -cc:$ThisCongestionControl -ptput:1"
             Write-Debug $Command
             $Output = [string](Invoke-Expression $Command)
             Write-Debug $Output
@@ -628,10 +629,17 @@ foreach ($ThisReorderDelayDeltaMs in $ReorderDelayDeltaMs) {
                 $Rate = 0
 
             } else {
-                # Grab the rate from the output text. Example:
-                #   Started!  Result: 23068672 bytes @ 18066 kbps (10215.203 ms). App Main returning status 0
-                $Rate = [int]$Output.Split(" ")[6]
-                Write-Debug "$Rate Kbps"
+                $RateMatch = [regex]::Match(
+                    $Output,
+                    "Result:\s+Upload\s+(\d+)\s+kbps|Result:\s+Upload\s+\d+\s+bytes\s+@\s+(\d+)\s+kbps|Upload:\s+\d+\s+bytes\s+@\s+(\d+)\s+kbps")
+                if ($RateMatch.Success) {
+                    $Rate = [int]($RateMatch.Groups | Where-Object { $_.Success -and $_.Value -match "^\d+$" } | Select-Object -Last 1).Value
+                    Write-Debug "$Rate Kbps"
+                } else {
+                    Write-Host $Command
+                    Write-Warning "Failed to parse throughput rate from output: $Output"
+                    $Rate = 0
+                }
             }
 
             $Results.Add($Rate) | Out-Null
