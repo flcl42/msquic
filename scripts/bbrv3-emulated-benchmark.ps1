@@ -19,6 +19,8 @@ or where BBRv3 should improve BBRv1 behavior:
 
 The script delegates to scripts/emulated-performance.ps1, so it has the same
 requirements: DuoNic must be installed and secnetperf must already be built.
+Only QUIC is supported because TCP uses the operating system's congestion
+controller and cannot exercise the MsQuic controllers in this comparison.
 
 #>
 
@@ -36,7 +38,7 @@ param (
     [string]$Tls = "",
 
     [Parameter(Mandatory = $false)]
-    [ValidateSet("QUIC", "TCPTLS")]
+    [ValidateSet("QUIC")]
     [string[]]$Protocol = "QUIC",
 
     [Parameter(Mandatory = $false)]

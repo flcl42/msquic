@@ -74,7 +74,7 @@ param (
     [string]$Arch = "x64",
 
     [Parameter(Mandatory = $false)]
-    [ValidateSet("schannel", "quictls", "openssl")]
+    [ValidateSet("schannel", "quictls", "openssl", "")]
     [string]$Tls = "",
 
     [Parameter(Mandatory = $false)]
@@ -249,6 +249,14 @@ class Results {
     }
 }
 
+function Get-TestScenarioName([Object]$TestResult) {
+    # Results written before scenarios were introduced are custom runs.
+    if ($null -eq $TestResult.PSObject.Properties["ScenarioName"]) {
+        return "Custom"
+    }
+    return $TestResult.ScenarioName
+}
+
 function Find-MatchingTest([Object]$TestResult, [Object]$RemoteResults) {
     foreach ($Remote in $RemoteResults) {
         if (
@@ -260,7 +268,9 @@ function Find-MatchingTest([Object]$TestResult, [Object]$RemoteResults) {
             $TestResult.ReorderDelayDeltaMs -eq $Remote.ReorderDelayDeltaMs -and
             $TestResult.Tcp -eq $Remote.Tcp -and
             $TestResult.DurationMs -eq $Remote.DurationMs -and
-            $TestResult.Pacing -eq $Remote.Pacing
+            $TestResult.Pacing -eq $Remote.Pacing -and
+            $TestResult.CongestionControl -eq $Remote.CongestionControl -and
+            (Get-TestScenarioName $TestResult) -eq (Get-TestScenarioName $Remote)
         ) {
             return $Remote
         }
@@ -447,7 +457,7 @@ if ($MergeDataFiles) {
                 }
             }
 
-            $Run = [FormattedResult]::new($_.ScenarioName, $_.RttMs, $_.BottleneckMbps, $_.BottleneckBufferPackets, $_.RandomLossDenominator, $_.RandomReorderDenominator, $_.ReorderDelayDeltaMs, $_.Tcp, $_.DurationMs, $_.Pacing, $_.RateKbps, $RemoteRate, $_.CongestionControl);
+            $Run = [FormattedResult]::new((Get-TestScenarioName $_), $_.RttMs, $_.BottleneckMbps, $_.BottleneckBufferPackets, $_.RandomLossDenominator, $_.RandomReorderDenominator, $_.ReorderDelayDeltaMs, $_.Tcp, $_.DurationMs, $_.Pacing, $_.RateKbps, $RemoteRate, $_.CongestionControl);
             $FormatResults.Add($Run)
         }
     }
@@ -701,9 +711,8 @@ foreach ($ThisReorderDelayDeltaMs in $ReorderDelayDeltaMs) {
             $Results.Add($Rate) | Out-Null
             if ($PrintConnectionStats) {
                 $Stats = Get-ConnectionStatistics $Output
-                if ($null -ne $Stats) {
-                    $ConnectionStats.Add($Stats) | Out-Null
-                }
+                # Preserve the iteration index even if a failed run has no stats.
+                $ConnectionStats.Add($Stats) | Out-Null
             }
 
             Write-Debug (Out-String -InputObject (Invoke-Expression "pktmon stop"))

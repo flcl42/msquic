@@ -122,6 +122,8 @@ It runs `cubic`, `bbr`, and `bbrv3` through the existing DuoNic emulated
 performance harness across regular mid-latency throughput, fixed-seed random
 throughput, moderate packet-loss, random-loss sweep, shallow-buffer, shallow
 buffer plus loss, and high-BDP random-loss scenarios.
+The comparison supports QUIC only; TCP uses the operating system's congestion
+controller, so MsQuic's `-cc` selection does not apply to TCP workloads.
 
 The added BBR-focused cases map to the path types called out by BBR's design:
 random loss, shallow buffers, and higher-BDP paths where loss-based controllers
