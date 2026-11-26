@@ -8,7 +8,7 @@
     <EventSourceSupport>true</EventSourceSupport>
   </PropertyGroup>
   <ItemGroup>
-    <PackageReference Include="MsQuic.Edge" />
-    <PackageVersion Include="MsQuic.Edge" Version="$(MsQuicEdgeVersion)" />
+    <PackageReference Include="Nethermind.MsQuic" />
+    <PackageVersion Include="Nethermind.MsQuic" Version="$(NethermindMsQuicVersion)" />
   </ItemGroup>
 </Project>

@@ -1,18 +1,18 @@
-# MsQuic.Edge
+# Nethermind.MsQuic
 
-This package supplies the edge fork's MsQuic binaries to .NET applications using
+This package supplies the fork's MsQuic binaries to .NET applications using
 `System.Net.Quic` or HTTP/3. The builds statically link the fork's bundled OpenSSL.
 
-Download the `MsQuic.Edge` artifact from a successful **Build MsQuic Edge** run.
+Download the `Nethermind.MsQuic` artifact from a successful **Build Nethermind.MsQuic** run.
 Extract the `.nupkg` into a local NuGet source and add an explicit package reference
 to the executable project. Replace the version below with the one in the artifact.
 
 ```xml
-<PackageReference Include="MsQuic.Edge" Version="2.7.0-edge.1.1" />
+<PackageReference Include="Nethermind.MsQuic" Version="2.7.0-ci.1.1" />
 ```
 
 ```sh
-dotnet nuget add source /path/to/packages --name msquic-edge
+dotnet nuget add source /path/to/packages --name nethermind-msquic
 dotnet build
 dotnet publish -r linux-x64 --self-contained
 dotnet publish -r linux-x64 -p:PublishAot=true
