@@ -338,8 +338,21 @@ BbrCongestionControlOnDataAcknowledged(
 
     BOOLEAN PreviousCanSendState = BbrCongestionControlCanSend(Cc);
     QUIC_CONNECTION* Connection = QuicCongestionControlGetConnection(Cc);
+    uint32_t PrevInflightBytes = Bbr->BytesInFlight;
+
+    //
+    // Implicitly acknowledged bytes (e.g. outstanding Initial or Handshake
+    // packets when their keys are discarded) have left the network too, so
+    // they must always be removed from bytes in flight.
+    //
+    CXPLAT_DBG_ASSERT(Bbr->BytesInFlight >= AckEvent->NumRetransmittableBytes);
+    Bbr->BytesInFlight -= AckEvent->NumRetransmittableBytes;
 
     if (AckEvent->IsImplicit) {
+        //
+        // Implicit ACKs carry no packet information, so there are no RTT,
+        // round trip or bandwidth samples to process.
+        //
         BbrCongestionControlUpdateCongestionWindow(
             Cc, AckEvent->NumTotalAckedRetransmittableBytes, AckEvent->NumRetransmittableBytes);
 
@@ -348,11 +361,6 @@ BbrCongestionControlOnDataAcknowledged(
         }
         return BbrUpdateBlockedState(Cc, PreviousCanSendState);
     }
-
-    uint32_t PrevInflightBytes = Bbr->BytesInFlight;
-
-    CXPLAT_DBG_ASSERT(Bbr->BytesInFlight >= AckEvent->NumRetransmittableBytes);
-    Bbr->BytesInFlight -= AckEvent->NumRetransmittableBytes;
 
     if (AckEvent->MinRttValid) {
         Bbr->RttSampleExpired = Bbr->MinRttTimestampValid ?
