@@ -25,14 +25,14 @@ jobs:
         - { rid: linux-arm64, platform: linux, arch: arm64, runner: ubuntu-22.04-arm }
         - { rid: linux-musl-x64, platform: linux, arch: x64, runner: ubuntu-22.04, image: 'alpine:3.22', docker-platform: linux/amd64 }
         - { rid: linux-musl-arm64, platform: linux, arch: arm64, runner: ubuntu-22.04-arm, image: 'alpine:3.22', docker-platform: linux/arm64 }
-        - { rid: osx-x64, platform: macos, arch: x64, runner: macos-15 }
-        - { rid: osx-arm64, platform: macos, arch: arm64, runner: macos-15 }
+        - { rid: osx-x64, platform: macos, arch: x64, runner: macos-15-intel }
+        - { rid: osx-arm64, platform: macos, arch: arm64, runner: macos-15-intel }
         - { rid: android-x64, platform: android, arch: x64, runner: ubuntu-22.04 }
         - { rid: android-arm, platform: android, arch: arm, runner: ubuntu-22.04 }
         - { rid: android-arm64, platform: android, arch: arm64, runner: ubuntu-22.04 }
-        - { rid: ios-arm64, platform: ios, arch: arm64, runner: macos-15 }
-        - { rid: iossimulator-x64, platform: ios, arch: x64, runner: macos-15 }
-        - { rid: iossimulator-arm64, platform: ios, arch: arm64, runner: macos-15 }
+        - { rid: ios-arm64, platform: ios, arch: arm64, runner: macos-15-intel }
+        - { rid: iossimulator-x64, platform: ios, arch: x64, runner: macos-15-intel }
+        - { rid: iossimulator-arm64, platform: ios, arch: arm64, runner: macos-15-intel }
     env:
       MSQUIC_RID: ${{ matrix.rid }}
       MSQUIC_PLATFORM: ${{ matrix.platform }}
