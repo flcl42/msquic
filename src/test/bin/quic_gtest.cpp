@@ -2871,6 +2871,15 @@ TEST(Misc, StreamReliableResetMultipleSends) {
         QuicTestStreamReliableResetMultipleSends();
     }
 }
+
+TEST(Misc, StreamReliableResetFlowControl) {
+    TestLogger Logger("StreamReliableResetFlowControl");
+    if (TestingKernelMode) {
+        ASSERT_TRUE(InvokeKernelTest(FUNC(QuicTestStreamReliableResetFlowControl)));
+    } else {
+        QuicTestStreamReliableResetFlowControl();
+    }
+}
 #endif // QUIC_PARAM_STREAM_RELIABLE_OFFSET
 
 #ifdef QUIC_API_ENABLE_PREVIEW_FEATURES
