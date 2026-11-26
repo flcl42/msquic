@@ -27,7 +27,6 @@ jobs:
         - { rid: linux-musl-arm64, platform: linux, arch: arm64, runner: ubuntu-22.04-arm, image: 'alpine:3.22', docker-platform: linux/arm64 }
         - { rid: osx-x64, platform: macos, arch: x64, runner: macos-15 }
         - { rid: osx-arm64, platform: macos, arch: arm64, runner: macos-15 }
-        - { rid: android-x86, platform: android, arch: x86, runner: ubuntu-22.04 }
         - { rid: android-x64, platform: android, arch: x64, runner: ubuntu-22.04 }
         - { rid: android-arm, platform: android, arch: arm, runner: ubuntu-22.04 }
         - { rid: android-arm64, platform: android, arch: arm64, runner: ubuntu-22.04 }
@@ -75,6 +74,7 @@ jobs:
         BUILD_IMAGE: ${{ matrix.image }}
         DOCKER_PLATFORM: ${{ matrix.docker-platform }}
       run: |
+        mkdir -p build/edge artifacts/edge/container
         docker run --rm --platform "$DOCKER_PLATFORM" --mount "type=bind,source=$PWD,target=/src" --workdir /src \
           "$BUILD_IMAGE" sh -ec '
             if [ "$1" = linux-x86 ]; then
@@ -97,6 +97,7 @@ jobs:
         $version = Get-Content version.json -Raw | ConvertFrom-Json
         $name = switch ($env:MSQUIC_PLATFORM) {
             windows { 'msquic.dll' }
+            android { 'libmsquic.so' }
             macos   { 'libmsquic.dylib' }
             ios     { 'libmsquic.a' }
             default { "libmsquic.so.$($version.major)" }
@@ -186,6 +187,9 @@ jobs:
         $publish = @('-r', $env:SMOKE_RID, '--self-contained') + $restore
         $app = $IsWindows ? 'SmokeTest.exe' : 'SmokeTest'
         $env:DOTNET_BUNDLE_EXTRACT_BASE_DIR = "$PWD/$output/extracted"
+        if ($IsWindows) {
+            $env:Path = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer;$env:Path"
+        }
 
         dotnet build $project -o "$output/build" @restore
         dotnet "$output/build/SmokeTest.dll" $env:GITHUB_SHA

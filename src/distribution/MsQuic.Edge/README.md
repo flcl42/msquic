@@ -29,6 +29,6 @@ musl (x64 and Arm64). The macOS assets are for x64 and Arm64. For a Linux or mac
 single-file publish, set `IncludeNativeLibrariesForSelfExtract=true` to bundle
 the MsQuic library and extract it when the app starts.
 
-The workflow also uploads native Android and iOS builds for direct integration.
-The iOS libraries are static archives for devices and simulators. The .NET package
-supplies the desktop RIDs listed above.
+The workflow also uploads native Android (Arm, Arm64 and x64) and iOS builds for
+direct integration. The iOS libraries are static archives for Arm64 devices and
+Arm64 and x64 simulators. The .NET package supplies the desktop RIDs listed above.
