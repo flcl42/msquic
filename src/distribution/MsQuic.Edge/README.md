@@ -19,10 +19,10 @@ dotnet publish -r linux-x64 -p:PublishAot=true
 ```
 
 Windows supports `win-x86`, `win-x64`, and `win-arm64` on .NET 10 and newer.
-The package enables [app-local MsQuic](https://learn.microsoft.com/dotnet/core/runtime-config/networking#app-local-msquic-windows)
-and copies `msquic.dll` beside the app. For a Windows single-file publish, ship
-`msquic.dll` alongside the executable so the runtime can load it from that path.
+The package enables app-local MsQuic and copies `msquic.dll` beside the app.
+For a Windows single-file publish, ship `msquic.dll` alongside the executable.
 Set an explicit RID when deploying to a different Windows architecture.
+[Microsoft's app-local MsQuic setting](https://learn.microsoft.com/dotnet/core/runtime-config/networking#app-local-msquic-windows)
 
 Linux uses the package's native assets for glibc (x86, x64, Arm, and Arm64) and
 musl (x64 and Arm64). The macOS assets are for x64 and Arm64. For a Linux or macOS

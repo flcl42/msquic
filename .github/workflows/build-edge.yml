@@ -162,7 +162,7 @@ jobs:
         include:
         - { rid: win-x64, runner: windows-2022 }
         - { rid: linux-x64, runner: ubuntu-22.04 }
-        - { rid: osx-arm64, runner: macos-15 }
+        - { rid: osx-x64, runner: macos-15-intel }
     env:
       MSQUIC_EDGE_VERSION: ${{ needs.package.outputs.version }}
       SMOKE_RID: ${{ matrix.rid }}
