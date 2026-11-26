@@ -1,0 +1,197 @@
+name: Build MsQuic Edge
+
+on:
+  push:
+    branches: [master]
+
+permissions:
+  contents: read
+
+jobs:
+  native:
+    name: Native OpenSSL (${{ matrix.rid }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - { rid: win-x86, platform: windows, arch: x86, runner: windows-2022 }
+        - { rid: win-x64, platform: windows, arch: x64, runner: windows-2022 }
+        - { rid: win-arm64, platform: windows, arch: arm64, runner: windows-2022 }
+        - { rid: linux-x86, platform: linux, arch: x86, runner: ubuntu-22.04, image: 'debian:bookworm-slim', docker-platform: linux/386 }
+        - { rid: linux-x64, platform: linux, arch: x64, runner: ubuntu-22.04 }
+        - { rid: linux-arm, platform: linux, arch: arm, runner: ubuntu-22.04 }
+        - { rid: linux-arm64, platform: linux, arch: arm64, runner: ubuntu-22.04-arm }
+        - { rid: linux-musl-x64, platform: linux, arch: x64, runner: ubuntu-22.04, image: 'alpine:3.22', docker-platform: linux/amd64 }
+        - { rid: linux-musl-arm64, platform: linux, arch: arm64, runner: ubuntu-22.04-arm, image: 'alpine:3.22', docker-platform: linux/arm64 }
+        - { rid: osx-x64, platform: macos, arch: x64, runner: macos-15 }
+        - { rid: osx-arm64, platform: macos, arch: arm64, runner: macos-15 }
+        - { rid: android-x86, platform: android, arch: x86, runner: ubuntu-22.04 }
+        - { rid: android-x64, platform: android, arch: x64, runner: ubuntu-22.04 }
+        - { rid: android-arm, platform: android, arch: arm, runner: ubuntu-22.04 }
+        - { rid: android-arm64, platform: android, arch: arm64, runner: ubuntu-22.04 }
+        - { rid: ios-arm64, platform: ios, arch: arm64, runner: macos-15 }
+        - { rid: iossimulator-x64, platform: ios, arch: x64, runner: macos-15 }
+        - { rid: iossimulator-arm64, platform: ios, arch: arm64, runner: macos-15 }
+    env:
+      MSQUIC_RID: ${{ matrix.rid }}
+      MSQUIC_PLATFORM: ${{ matrix.platform }}
+      MSQUIC_ARCH: ${{ matrix.arch }}
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with:
+        persist-credentials: false
+    - name: Check out native dependencies
+      shell: pwsh
+      run: |
+        $submodules = @('submodules/openssl')
+        if ($IsWindows) { $submodules += 'submodules/xdp-for-windows' }
+        git submodule update --init --depth 1 --jobs 2 -- @submodules
+    - name: Install NASM
+      if: matrix.platform == 'windows'
+      uses: ilammy/setup-nasm@72793074d3c8cdda771dba85f6deafe00623038b # v1.5.2
+    - name: Install the Arm cross-compiler
+      if: matrix.rid == 'linux-arm'
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y g++-arm-linux-gnueabihf
+    - name: Build MsQuic
+      if: "!matrix.image"
+      shell: pwsh
+      run: |
+        $options = @{}
+        if ($IsWindows) {
+            $options.Generator = 'Visual Studio 17 2022'
+            $options.StaticCRT = $true
+        }
+        if ($env:MSQUIC_RID -eq 'linux-arm') { $options.OneBranch = $true }
+        if ($env:MSQUIC_RID -eq 'iossimulator-arm64') { $options.IosSimulator = $true }
+        ./scripts/build.ps1 -Config Release -Platform $env:MSQUIC_PLATFORM -Arch $env:MSQUIC_ARCH -Tls openssl `
+            -DisableLogs -DisableTools -DisableTest -DisablePerf @options
+    - name: Build MsQuic in the target Linux userland
+      if: matrix.image
+      env:
+        BUILD_IMAGE: ${{ matrix.image }}
+        DOCKER_PLATFORM: ${{ matrix.docker-platform }}
+      run: |
+        docker run --rm --platform "$DOCKER_PLATFORM" --mount "type=bind,source=$PWD,target=/src" --workdir /src \
+          "$BUILD_IMAGE" sh -ec '
+            if [ "$1" = linux-x86 ]; then
+              apt-get update -qq
+              apt-get install -y --no-install-recommends cmake g++ git make perl util-linux
+              set -- linux32
+            else
+              apk add --no-cache build-base cmake git linux-headers perl
+              set --
+            fi
+            git config --global --add safe.directory /src
+            "$@" cmake -B build/edge -DCMAKE_BUILD_TYPE=Release -DQUIC_TLS_LIB=openssl -DQUIC_OUTPUT_DIR=/src/artifacts/edge/container
+            "$@" cmake --build build/edge --parallel "$(nproc)"
+          ' sh "$MSQUIC_RID"
+    - name: Stage the native library
+      shell: pwsh
+      env:
+        BUILD_IMAGE: ${{ matrix.image }}
+      run: |
+        $version = Get-Content version.json -Raw | ConvertFrom-Json
+        $name = switch ($env:MSQUIC_PLATFORM) {
+            windows { 'msquic.dll' }
+            macos   { 'libmsquic.dylib' }
+            ios     { 'libmsquic.a' }
+            default { "libmsquic.so.$($version.major)" }
+        }
+        if ($env:BUILD_IMAGE) {
+            $buildDir = 'artifacts/edge/container'
+        } else {
+            $suffix = if ($env:MSQUIC_RID -eq 'iossimulator-arm64') { 'simulator' } else { '' }
+            $config = ./scripts/get-buildconfig.ps1 -Config Release -Platform $env:MSQUIC_PLATFORM -Arch $env:MSQUIC_ARCH -Tls openssl -ExtraArtifactDir $suffix
+            $buildDir = $config.ArtifactsDir
+        }
+        $library = Get-Item -LiteralPath (Join-Path $buildDir $name)
+        $source = [IO.File]::ResolveLinkTarget($library.FullName, $true)
+        $output = New-Item -ItemType Directory -Path 'artifacts/edge/staged' -Force
+        [IO.File]::Copy(($source ?? $library).FullName, (Join-Path $output.FullName $name))
+    - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+      with:
+        name: native-${{ matrix.rid }}
+        path: artifacts/edge/staged/
+        if-no-files-found: error
+
+  package:
+    name: Pack MsQuic.Edge
+    needs: native
+    runs-on: ubuntu-22.04
+    outputs:
+      version: ${{ steps.pack.outputs.version }}
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with:
+        persist-credentials: false
+    - run: git submodule update --init --depth 1 -- submodules/openssl
+    - uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
+      with:
+        dotnet-version: 10.0.x
+    - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+      with:
+        pattern: native-*
+        path: artifacts/edge/native
+    - name: Pack the native libraries
+      id: pack
+      shell: pwsh
+      run: |
+        $native = Get-Content version.json -Raw | ConvertFrom-Json
+        $version = "$($native.major).$($native.minor).$($native.patch)-edge.$env:GITHUB_RUN_NUMBER.$env:GITHUB_RUN_ATTEMPT"
+        dotnet pack src/distribution/MsQuic.Edge -o artifacts/edge/package "-p:PackageVersion=$version" "-p:RepositoryCommit=$env:GITHUB_SHA"
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+        "version=$version" >> $env:GITHUB_OUTPUT
+    - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+      with:
+        name: MsQuic.Edge
+        path: artifacts/edge/package/*.nupkg
+        if-no-files-found: error
+
+  smoke:
+    name: Verify NuGet deployment (${{ matrix.rid }})
+    needs: package
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - { rid: win-x64, runner: windows-2022 }
+        - { rid: linux-x64, runner: ubuntu-22.04 }
+        - { rid: osx-arm64, runner: macos-15 }
+    env:
+      MSQUIC_EDGE_VERSION: ${{ needs.package.outputs.version }}
+      SMOKE_RID: ${{ matrix.rid }}
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with:
+        persist-credentials: false
+    - uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
+      with:
+        dotnet-version: 10.0.x
+    - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+      with:
+        name: MsQuic.Edge
+        path: artifacts/edge/package
+    - name: Run the app in each deployment mode
+      shell: pwsh
+      run: |
+        $PSNativeCommandUseErrorActionPreference = $true
+        $project = 'src/distribution/MsQuic.Edge/SmokeTest'
+        $output = 'artifacts/edge/smoke'
+        $restore = @("-p:RestoreAdditionalProjectSources=$PWD/artifacts/edge/package", "-p:MsQuicEdgeVersion=$env:MSQUIC_EDGE_VERSION")
+        $publish = @('-r', $env:SMOKE_RID, '--self-contained') + $restore
+        $app = $IsWindows ? 'SmokeTest.exe' : 'SmokeTest'
+        $env:DOTNET_BUNDLE_EXTRACT_BASE_DIR = "$PWD/$output/extracted"
+
+        dotnet build $project -o "$output/build" @restore
+        dotnet "$output/build/SmokeTest.dll" $env:GITHUB_SHA
+        dotnet publish $project -o "$output/self-contained" @publish
+        & "$output/self-contained/$app" $env:GITHUB_SHA
+        dotnet publish $project -o "$output/single-file" -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true @publish
+        & "$output/single-file/$app" $env:GITHUB_SHA
+        dotnet publish $project -o "$output/aot" -p:PublishAot=true @publish
+        & "$output/aot/$app" $env:GITHUB_SHA

@@ -1235,6 +1235,7 @@ QuicCryptoTlsEncodeTransportParameters(
             (TransportParams->Flags &
              (QUIC_TP_FLAG_TIMESTAMP_SEND_ENABLED | QUIC_TP_FLAG_TIMESTAMP_RECV_ENABLED))
             >> QUIC_TP_FLAG_TIMESTAMP_SHIFT;
+        CXPLAT_ANALYSIS_ASSUME(value <= 3);
         TPBuf =
             TlsWriteTransportParamVarInt(
                 QUIC_TP_ID_ENABLE_TIMESTAMP,

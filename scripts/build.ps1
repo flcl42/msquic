@@ -12,6 +12,9 @@ This script provides helpers for building msquic.
 .PARAMETER Platform
     Specify which platform to build for.
 
+.PARAMETER IosSimulator
+    Build the iOS arm64 simulator library instead of the device library.
+
 .PARAMETER Static
     Specify a static library is preferred (shared is the default).
 
@@ -247,7 +250,10 @@ param (
     [string]$ToolchainFile = "",
 
     [Parameter(Mandatory = $false)]
-    [switch]$EnableGCov = $false
+    [switch]$EnableGCov = $false,
+
+    [Parameter(Mandatory = $false)]
+    [switch]$IosSimulator = $false
 )
 
 Set-StrictMode -Version 'Latest'
@@ -258,6 +264,15 @@ if ($Parallel -lt -1) {
         $Parallel = -1
     } else {
         $Parallel = 0
+    }
+}
+
+if ($IosSimulator) {
+    if ($Platform -ne "ios" -or $Arch -notin @("", "arm64")) {
+        Write-Error "-IosSimulator requires -Platform ios and arm64."
+    }
+    if ($ExtraArtifactDir -eq "") {
+        $ExtraArtifactDir = "simulator"
     }
 }
 
@@ -346,6 +361,9 @@ $BaseBuildDir = Join-Path $RootDir "build"
 
 $BuildDir = Join-Path $BaseBuildDir $Platform
 $BuildDir = Join-Path $BuildDir "$($Arch)_$($Tls)"
+if ($IosSimulator) {
+    $BuildDir += "_simulator"
+}
 
 if ($Clean) {
     # Delete old build/config directories.
@@ -419,7 +437,9 @@ function CMake-Generate {
         $Arguments +=  " -DCMAKE_TOOLCHAIN_FILE=""$IosTCFile"" -DDEPLOYMENT_TARGET=""13.0"" -DENABLE_ARC=0 -DCMAKE_OSX_DEPLOYMENT_TARGET=""13.0"""
         switch ($Arch) {
             "x64"   { $Arguments += " -DPLATFORM=SIMULATOR64"}
-            "arm64" { $Arguments += " -DPLATFORM=OS64"}
+            "arm64" {
+                $Arguments += " -DPLATFORM=" + ($IosSimulator ? "SIMULATORARM64" : "OS64")
+            }
         }
     }
     if ($Platform -eq "macos") {
