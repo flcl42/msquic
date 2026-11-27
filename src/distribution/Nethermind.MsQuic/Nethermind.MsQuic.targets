@@ -1,0 +1,32 @@
+<Project>
+  <PropertyGroup Condition="'$(TargetFrameworkIdentifier)' == '.NETCoreApp' and ('$(OutputType)' == 'Exe' or '$(OutputType)' == 'WinExe')">
+    <_NethermindMsQuicRid Condition="'$(RuntimeIdentifier)' != ''">$(RuntimeIdentifier)</_NethermindMsQuicRid>
+    <_NethermindMsQuicRid Condition="'$(RuntimeIdentifier)' == ''">$(NETCoreSdkPortableRuntimeIdentifier)</_NethermindMsQuicRid>
+    <_NethermindMsQuicRid Condition="'$(RuntimeIdentifier)' == '' and $([MSBuild]::IsOSPlatform('Windows')) and
+      ('$(PlatformTarget)' == 'x86' or '$(PlatformTarget)' == 'x64' or '$(PlatformTarget)' == 'arm64')">win-$(PlatformTarget.ToLowerInvariant())</_NethermindMsQuicRid>
+    <_NethermindMsQuicWindowsLibrary Condition="$(_NethermindMsQuicRid.StartsWith('win-'))">$(MSBuildThisFileDirectory)windows/$(_NethermindMsQuicRid)/msquic.dll</_NethermindMsQuicWindowsLibrary>
+  </PropertyGroup>
+
+  <ItemGroup Condition="'$(_NethermindMsQuicWindowsLibrary)' != ''">
+    <RuntimeHostConfigurationOption Include="System.Net.Quic.AppLocalMsQuic" Value="true" />
+    <!-- The runtime loads an absolute path beside the app, including for single-file and Native AOT. -->
+    <None Include="$(_NethermindMsQuicWindowsLibrary)" Link="msquic.dll" TargetPath="msquic.dll"
+          CopyToOutputDirectory="Always" CopyToPublishDirectory="Always" ExcludeFromSingleFile="true" />
+  </ItemGroup>
+
+  <Target Name="_NethermindMsQuicValidateWindows" BeforeTargets="PrepareForBuild" Condition="'$(_NethermindMsQuicWindowsLibrary)' != ''">
+    <Error Condition="$([MSBuild]::VersionLessThan('$(TargetFrameworkVersion)', '10.0'))"
+           Text="Nethermind.MsQuic requires .NET 10 or newer for app-local MsQuic on Windows." />
+    <Error Condition="!Exists('$(_NethermindMsQuicWindowsLibrary)')"
+           Text="Nethermind.MsQuic has no Windows library for '$(_NethermindMsQuicRid)'. Use win-x86, win-x64, or win-arm64." />
+  </Target>
+
+  <Target Name="_NethermindMsQuicRemoveRuntimePackLibrary" AfterTargets="ResolveRuntimePackAssets" Condition="'$(_NethermindMsQuicWindowsLibrary)' != ''">
+    <ItemGroup>
+      <_NethermindMsQuicRuntimePackLibrary Include="@(RuntimePackAsset)"
+                                    Condition="'%(RuntimePackAsset.DestinationSubPath)' == 'msquic.dll'" />
+      <RuntimePackAsset Remove="@(_NethermindMsQuicRuntimePackLibrary)" />
+      <ReferenceCopyLocalPaths Remove="@(_NethermindMsQuicRuntimePackLibrary)" />
+    </ItemGroup>
+  </Target>
+</Project>
