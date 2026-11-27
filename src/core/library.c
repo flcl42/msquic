@@ -71,7 +71,7 @@ MsQuicLibraryLoad(
         MsQuicLib.Version[0] = VER_MAJOR;
         MsQuicLib.Version[1] = VER_MINOR;
         MsQuicLib.Version[2] = VER_PATCH;
-        MsQuicLib.Version[3] = VER_BUILD_ID;
+        MsQuicLib.Version[3] = VER_REVISION;
         MsQuicLib.GitHash = VER_GIT_HASH_STR;
     }
 }

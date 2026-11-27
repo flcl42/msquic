@@ -23,15 +23,16 @@ $PSDefaultParameterValues['*:ErrorAction'] = 'Stop'
 
 # Relevant file paths used by this script.
 $RootDir = Split-Path $PSScriptRoot -Parent
-$MsQuicVerFilePath = Join-Path $RootDir "src" "inc" "msquic.ver"
+$VersionJson = Join-Path $RootDir "version.json"
 $UpdateVersionScript = Join-Path $RootDir "scripts" "update-version.ps1"
 
 # Make sure we're on the latest main.
 git checkout main
 git pull
 
-# Get the current major and minor version numbers from msquic.ver.
-$Version = (Select-String -Path $MsQuicVerFilePath "VER_FILEVERSION *(.*),.*,0$" -AllMatches).Matches[0].Groups[1].Value.Replace(",", ".")
+# Get the current major and minor version numbers.
+$VersionInfo = Get-Content -Raw $VersionJson | ConvertFrom-Json
+$Version = "$($VersionInfo.major).$($VersionInfo.minor)"
 
 # Create a new release branch with the current version number.
 git checkout -b "release/$Version"
